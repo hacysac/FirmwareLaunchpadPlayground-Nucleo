@@ -3,19 +3,90 @@
 
 use cortex_m::peripheral::SCB;
 use cortex_m_rt::{ExceptionFrame, exception};
-use defmt::info;
+use defmt::{info};
 use embassy_executor::Spawner;
-use embassy_stm32::{wdg::IndependentWatchdog};
+use embassy_futures::select::Either::{First, Second};
+use embassy_futures::select::{select};
+use embassy_stm32::exti::{ExtiInput, InterruptHandler};
+use embassy_stm32::mode::Async;
+use embassy_stm32::{
+    Config, bind_interrupts, dma, interrupt,
+    peripherals::{self},
+};
+use embassy_stm32::gpio::{Level, Output, Speed, Pull};
+use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_time::Timer;
+use crate::potentiometer::potentiometer_task;
+use crate::led::led_task;
+use crate::button::button_task;
+use crate::minicar::car_task;
+
 use {defmt_rtt as _, panic_probe as _};
+use defmt::unwrap;
+
+mod button;
+mod led;
+mod potentiometer;
+mod minicar;
+
+bind_interrupts!(struct ExtiIrqs {
+    EXTI9_5 => InterruptHandler<interrupt::typelevel::EXTI9_5>;
+    EXTI15_10 => InterruptHandler<interrupt::typelevel::EXTI15_10>;
+});
+
+bind_interrupts!(struct I2cIrqs {
+    DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
+    DMA1_CHANNEL7 => dma::InterruptHandler<peripherals::DMA1_CH7>;
+    I2C2_EV => embassy_stm32::i2c::EventInterruptHandler<peripherals::I2C2>;
+    I2C2_ER => embassy_stm32::i2c::ErrorInterruptHandler<peripherals::I2C2>;
+});
+
+bind_interrupts!(struct AdcIrqs {
+    DMA2_CHANNEL1 => dma::InterruptHandler<peripherals::DMA2_CH1>;
+});
+
+#[embassy_executor::task]
+async fn buttons_task(
+    mut brake_button: ExtiInput<'static, Async>,
+    mut drive_button: ExtiInput<'static, Async>,
+    mut speedom_led: Output<'static>,
+    mut enable_led: Output<'static>,
+) {
+    loop {
+        let brake_fut = brake_button.wait_for_any_edge();
+        let drive_fut = drive_button.wait_for_any_edge();
+
+        match select(brake_fut, drive_fut).await {
+            First(_) => speedom_led.set_level(brake_button.is_high().into()),
+            Second(_) => enable_led.set_level(drive_button.is_high().into()),
+        }
+    }
+}
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
-    let p = embassy_stm32::init(Default::default());
+async fn main(spawner: Spawner) {
+    let p = embassy_stm32::init(Config::default());
+ 
+    info!("Welcome to Firmware Launchpad!");
+ 
+    let enable_led = Output::new(p.PC8, Level::Low, Speed::Low);
+    let speedom_led = Output::new(p.PC9, Level::Low, Speed::Low);
+ 
+    let brake_button = ExtiInput::new(p.PA9, p.EXTI9, Pull::Up, ExtiIrqs);
+    let drive_button = ExtiInput::new(p.PA8, p.EXTI8, Pull::Up, ExtiIrqs);
+    let reverse_button = ExtiInput::new(p.PA10, p.EXTI10, Pull::Up, ExtiIrqs);
+ 
+    //Phase 3
+    // spawner.spawn(unwrap!(button_task(drive_button, brake_button, reverse_button)));
+    // spawner.spawn(unwrap!(potentiometer_task(p.ADC1, p.PA3, p.DMA2_CH1)));
+    // spawner.spawn(unwrap!(led_task(speedom_led, enable_led)));
+    // spawner.spawn(unwrap!(car_task()));
+    
+    //Phase 1/2
+    spawner.spawn(unwrap!(buttons_task(brake_button, drive_button, speedom_led, enable_led)));
+    spawner.spawn(unwrap!(potentiometer_task(p.ADC1, p.PA3, p.DMA2_CH1)));
 
-    // PA5 is the user LED
-    // PC13 is the user button
-
+    // Watchdog (original code, unchanged)
     let mut iwdg = IndependentWatchdog::new(p.IWDG, 1_000_000);
     iwdg.unleash();
 
