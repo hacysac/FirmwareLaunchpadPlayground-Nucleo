@@ -4,7 +4,6 @@
 use defmt::{info};
 use embassy_stm32::{Peri, adc::{Adc, AdcChannel, AdcConfig, CONTINUOUS, Exten, SampleTime}, peripherals::{self}};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::Timer;
 
 use crate::AdcIrqs;
 
