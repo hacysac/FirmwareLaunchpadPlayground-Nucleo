@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use embassy_futures::select::{select3, Either3};
+use embassy_time::{Duration, Ticker, Timer};
 use cortex_m::peripheral::SCB;
 use cortex_m_rt::{ExceptionFrame, exception};
 use defmt::{info};
@@ -13,7 +15,6 @@ use embassy_stm32::{
 };
 use embassy_stm32::gpio::{Level, Output, Speed, Pull};
 use embassy_stm32::wdg::IndependentWatchdog;
-use embassy_time::Timer;
 use crate::potentiometer::potentiometer_task;
 use embassy_stm32::rcc::mux::Adcsel;
 
@@ -52,11 +53,8 @@ async fn buttons_task(
     mut speedom_led: Output<'static>,
     mut enable_led: Output<'static>,
 ) {
-    use embassy_futures::select::{select3, Either3};
-use embassy_time::{Duration, Ticker, Timer};
 
-let mut tick = Ticker::every(Duration::from_millis(10));
-
+    let mut tick = Ticker::every(Duration::from_millis(10));
     loop {
         match select3(brake_button.wait_for_any_edge(), drive_button.wait_for_any_edge(), tick.next()).await{
             Either3::First(_) | Either3::Second(_) => Timer::after_millis(5).await,
